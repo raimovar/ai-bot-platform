@@ -45,7 +45,7 @@ numpy==1.26.3
 PyPDF2==3.0.1
 
 # Testing
-pytest==8.0.0
+pytest>=7.0.0,<8
 pytest-asyncio==0.23.4
 pytest-cov==4.1.0
 httpx==0.26.0
