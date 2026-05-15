@@ -25,7 +25,7 @@ Self-hosted platform for creating, managing, and deploying AI chatbots with Tele
 ### One-Line Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youruser/ai-bot-platform/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/youruser/ai-bot-platform/master/install.sh | bash
 ```
 
 ### Manual Installation

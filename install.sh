@@ -3,7 +3,7 @@
 # AI Bot Platform - One-Line Installation
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR_USER/ai-bot-platform/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_USER/ai-bot-platform/master/install.sh | bash
 #
 #   Or clone and run:
 #   git clone https://github.com/YOUR_USER/ai-bot-platform.git
