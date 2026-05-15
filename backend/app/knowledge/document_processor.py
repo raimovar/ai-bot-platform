@@ -5,6 +5,7 @@ Process and chunk documents for RAG
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
