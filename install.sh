@@ -22,7 +22,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Config
-REPO_URL="${REPO_URL:-https://github.com/youruser/ai-bot-platform.git}"
+REPO_URL="${REPO_URL:-https://github.com/raimovar/ai-bot-platform.git}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/ai-bot-platform}"
 DOMAIN="${DOMAIN:-localhost}"
 
