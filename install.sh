@@ -156,6 +156,12 @@ setup_docker() {
         exit 1
     fi
 
+    # Copy .env to docker directory (Docker Compose looks for .env next to docker-compose.yml)
+    if [ -f "$INSTALL_DIR/.env" ]; then
+        cp "$INSTALL_DIR/.env" "$INSTALL_DIR/docker/.env"
+        log_info "Copied .env to docker directory for Docker Compose"
+    fi
+
     # Create necessary directories
     mkdir -p "$INSTALL_DIR/docker/infra/traefik/certs"
     mkdir -p "$INSTALL_DIR/docker/infra/nginx"
