@@ -30,7 +30,8 @@ class Message(Base):
     latency_ms = Column(Integer, nullable=True)
 
     # Metadata
-    metadata = Column(JSONB, default=dict)
+    # Additional data
+    extra_data = Column(JSONB, default=dict)
 
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow)

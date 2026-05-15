@@ -33,8 +33,8 @@ class KnowledgeSource(Base):
     chunk_count = Column(Integer, default=0)
     total_chars = Column(Integer, default=0)
 
-    # Metadata
-    metadata = Column(JSONB, default=dict)
+    # Extra data
+    extra_data = Column(JSONB, default=dict)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -63,8 +63,8 @@ class KnowledgeChunk(Base):
     # In production, use pgvector extension directly
     embedding = Column(JSONB, default=list)
 
-    # Metadata
-    metadata = Column(JSONB, default=dict)
+    # Extra data
+    extra_data = Column(JSONB, default=dict)
 
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow)

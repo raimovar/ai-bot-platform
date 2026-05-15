@@ -28,8 +28,8 @@ class Session(Base):
     username = Column(String(255), nullable=True)
     first_name = Column(String(255), nullable=True)
 
-    # Metadata
-    metadata = Column(JSONB, default=dict)
+    # Configuration
+    config = Column(JSONB, default=dict)
     message_count = Column(Integer, default=0)
 
     # Timestamps
