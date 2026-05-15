@@ -126,7 +126,7 @@ class DocumentProcessor:
                 if len(current_chunk.strip()) >= self.min_chunk_size:
                     chunks.append(Chunk(
                         content=current_chunk.strip(),
-                        metadata={(metadata or {}), "chunk_index": chunk_index},
+                        metadata={**(metadata or {}), "chunk_index": chunk_index},
                         chunk_index=chunk_index,
                         start_char=current_start - len(current_chunk),
                         end_char=current_start,
@@ -147,7 +147,7 @@ class DocumentProcessor:
         if len(current_chunk.strip()) >= self.min_chunk_size:
             chunks.append(Chunk(
                 content=current_chunk.strip(),
-                metadata={(metadata or {}), "chunk_index": chunk_index},
+                metadata={**(metadata or {}), "chunk_index": chunk_index},
                 chunk_index=chunk_index,
                 start_char=current_start - len(current_chunk),
                 end_char=current_start,

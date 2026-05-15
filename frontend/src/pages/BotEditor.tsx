@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Save, Play, Square, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Play, Square } from 'lucide-react';
 import api from '../api/client';
 import Input from '../components/Input';
 import Select from '../components/Select';

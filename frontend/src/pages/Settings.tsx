@@ -6,18 +6,11 @@ import { Save, Key, Bell, Shield, Palette } from 'lucide-react';
 import api from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import Input from '../components/Input';
-import Select from '../components/Select';
 import Button from '../components/Button';
 import toast from 'react-hot-toast';
 
-const THEMES = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'System' },
-];
-
 export default function Settings() {
-  const { user } = useAuthStore();
+  useAuthStore();
   const [activeTab, setActiveTab] = useState('profile');
 
   return (

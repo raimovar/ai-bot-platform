@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Bot as BotIcon, RefreshCw } from 'lucide-react';
+import { Plus, Bot as BotIcon } from 'lucide-react';
 import api from '../api/client';
 import BotCard from '../components/BotCard';
 import EmptyState from '../components/EmptyState';

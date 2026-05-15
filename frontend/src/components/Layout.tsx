@@ -6,8 +6,7 @@ import {
   Settings, 
   LogOut, 
   Menu, 
-  X, 
-  ChevronDown 
+  X
 } from "lucide-react";
 import { useAuthStore } from "../stores/authStore";
 

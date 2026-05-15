@@ -2,10 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Send, Bot as BotIcon, User, RefreshCw, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, Send, Bot as BotIcon, RefreshCw, ThumbsUp, ThumbsDown } from 'lucide-react';
 import api from '../api/client';
-import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
 
 interface ChatMessage {
@@ -201,7 +200,7 @@ export default function BotChat() {
 
               {/* Rating for assistant messages */}
               {msg.role === 'assistant' && (
-                <div className={`flex items-center gap-1 mt-1 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className="flex items-center gap-1 mt-1 justify-start">
                   <button
                     onClick={() => rateMessage(msg.id, 1)}
                     className="p-1 text-gray-400 hover:text-green-600 transition-colors"
