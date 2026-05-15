@@ -117,15 +117,30 @@ async def create_bot(
                 detail=f"Bot limit reached ({user.max_bots})"
             )
     
-    # Check slug uniqueness
-    result = await db.execute(
-        select(Bot).where(Bot.slug == bot_data.slug)
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail="Bot slug already exists"
+    # Generate slug if not provided
+    if not bot_data.slug:
+        import re
+        slug = re.sub(r'[^a-z0-9]+', '-', bot_data.name.lower()).strip('-')
+        # Make unique
+        base_slug = slug
+        counter = 1
+        while True:
+            result = await db.execute(select(Bot).where(Bot.slug == slug))
+            if not result.scalar_one_or_none():
+                break
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+        bot_data.slug = slug
+    else:
+        # Check slug uniqueness
+        result = await db.execute(
+            select(Bot).where(Bot.slug == bot_data.slug)
         )
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Bot slug already exists"
+            )
     
     # Create bot
     bot = Bot(
