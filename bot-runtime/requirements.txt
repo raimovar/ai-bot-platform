@@ -1,0 +1,24 @@
+# Bot Runtime Dependencies
+# FastAPI for internal API
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+
+# Database
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+redis[hiredis]==5.0.1
+
+# HTTP Client
+httpx==0.26.0
+
+# Utils
+python-dotenv==1.0.1
+orjson==3.9.13
+tenacity==8.2.3
+
+# Telegram
+aiogram==3.4.1
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4

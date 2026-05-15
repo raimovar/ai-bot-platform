@@ -1,0 +1,25 @@
+version: "3.8"
+
+# Development overrides
+services:
+  backend:
+    build:
+      context: ../backend
+      target: development
+    volumes:
+      - ../backend:/app
+    environment:
+      - DEBUG=true
+  
+  frontend:
+    build:
+      context: ../frontend
+      target: development
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    command: npm run dev
+  
+  bot-runtime:
+    volumes:
+      - ../bot-runtime:/app

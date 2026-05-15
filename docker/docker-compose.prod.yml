@@ -1,0 +1,23 @@
+version: "3.8"
+
+# Production overrides
+services:
+  traefik:
+    command:
+      - --api.insecure=true
+      - --log.level=INFO
+      - --accesslog
+    ports:
+      - "80:80"
+      - "443:443"
+  
+  backend:
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  
+  frontend:
+    restart: always
