@@ -1,344 +1,447 @@
 """
-Knowledge Base endpoints.
+Knowledge API Endpoints
+Manage knowledge bases for bots
 """
-import uuid
-from datetime import datetime, timezone
-from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, BackgroundTasks
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-import httpx
 
-from app.core.database import get_db
-from app.core.config import settings
-from app.core.security import get_current_user
+import logging
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from pydantic import BaseModel
+
+from app.api.deps import get_db, get_current_user
 from app.models.bot import Bot
+from app.models.user import User
 from app.models.knowledge import KnowledgeSource, KnowledgeChunk
-from app.schemas.knowledge import (
-    KnowledgeSourceCreate, KnowledgeSourceUpdate,
-    KnowledgeSourceResponse, KnowledgeSourceListResponse,
-    KnowledgeChunkResponse, KnowledgeSearchRequest,
-    KnowledgeSearchResponse, DocumentUploadResponse,
+from app.schemas.bot import BotResponse
+from app.knowledge import (
+    DocumentProcessor,
+    get_embedding_service,
+    KnowledgeRetriever,
+    PostgresKnowledgeStore,
 )
 
-
-router = APIRouter()
-
-# Allowed file types
-ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf", ".doc", ".docx", ".csv", ".json"}
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
-# ─────────────────────────────────────────────────────────────
-# Knowledge Sources
-# ─────────────────────────────────────────────────────────────
+# Schemas
+class KnowledgeSourceCreate(BaseModel):
+    name: str
+    source_type: str  # file, url, text
+    content: Optional[str] = None
+    url: Optional[str] = None
 
-@router.get("/", response_model=KnowledgeSourceListResponse)
-async def list_sources(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
-    bot_id: Optional[uuid.UUID] = None,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: Optional[str] = None,
+
+class KnowledgeSourceResponse(BaseModel):
+    id: str
+    name: str
+    source_type: str
+    status: str
+    chunk_count: int
+    metadata: dict
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    limit: int = 5
+
+
+class KnowledgeSearchResponse(BaseModel):
+    chunks: List[dict]
+    context: str
+
+
+# Endpoints
+@router.get("/bots/{bot_id}/sources", response_model=List[KnowledgeSourceResponse])
+async def list_knowledge_sources(
+    bot_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """List knowledge sources."""
-    query = select(KnowledgeSource)
-    
-    if bot_id:
-        query = query.where(KnowledgeSource.bot_id == bot_id)
-    else:
-        # Get sources from user's bots
-        bot_query = select(Bot.id).where(
-            Bot.owner_id == uuid.UUID(current_user["id"])
-        )
-        query = query.where(KnowledgeSource.bot_id.in_(bot_query))
-    
-    if status:
-        query = query.where(KnowledgeSource.status == status)
-    
-    # Count
-    count_query = select(func.count(KnowledgeSource.id))
-    if bot_id:
-        count_query = count_query.where(KnowledgeSource.bot_id == bot_id)
-    total_result = await db.execute(count_query)
-    total = total_result.scalar()
-    
-    # Get page
-    query = query.order_by(KnowledgeSource.created_at.desc())
-    query = query.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(query)
-    sources = result.scalars().all()
-    
-    return KnowledgeSourceListResponse(
-        items=[KnowledgeSourceResponse.model_validate(s) for s in sources],
-        total=total,
-        page=page,
-        page_size=page_size,
-        pages=(total + page_size - 1) // page_size
+    """List all knowledge sources for a bot"""
+    result = await db.execute(
+        select(KnowledgeSource)
+        .where(KnowledgeSource.bot_id == bot_id)
+        .order_by(KnowledgeSource.created_at.desc())
     )
+    sources = result.scalars().all()
+
+    return [
+        KnowledgeSourceResponse(
+            id=str(s.id),
+            name=s.name,
+            source_type=s.source_type,
+            status=s.status,
+            chunk_count=s.chunk_count or 0,
+            metadata=s.metadata or {},
+        )
+        for s in sources
+    ]
 
 
-@router.post("/", response_model=KnowledgeSourceResponse, status_code=201)
-async def create_source(
-    source_data: KnowledgeSourceCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+@router.post("/bots/{bot_id}/sources")
+async def create_knowledge_source(
+    bot_id: int,
+    source: KnowledgeSourceCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Create a knowledge source."""
-    # Verify bot access - get bot_id from context
-    bot_id = getattr(source_data, 'bot_id', None)
-    if not bot_id:
-        raise HTTPException(status_code=400, detail="bot_id required")
-    
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
+    """Create a new knowledge source and process it"""
+    # Verify bot ownership
+    result = await db.execute(
+        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+    )
     bot = result.scalar_one_or_none()
-    
+
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if str(bot.owner_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    raise HTTPException(status_code=501, detail="Use POST /knowledge/upload for files")
 
-
-@router.get("/{source_id}", response_model=KnowledgeSourceResponse)
-async def get_source(
-    source_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
-):
-    """Get knowledge source by ID."""
-    result = await db.execute(
-        select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+    # Create source
+    knowledge_source = KnowledgeSource(
+        bot_id=bot_id,
+        name=source.name,
+        source_type=source.source_type,
+        url=source.url,
+        status="pending",
+        metadata={"created_by": str(current_user.id)},
     )
-    source = result.scalar_one_or_none()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-    
-    # Verify access
-    bot_result = await db.execute(select(Bot).where(Bot.id == source.bot_id))
-    bot = bot_result.scalar_one()
-    
-    if str(bot.owner_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    return KnowledgeSourceResponse.model_validate(source)
 
-
-@router.patch("/{source_id}", response_model=KnowledgeSourceResponse)
-async def update_source(
-    source_id: uuid.UUID,
-    source_data: KnowledgeSourceUpdate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
-):
-    """Update knowledge source."""
-    result = await db.execute(
-        select(KnowledgeSource).where(KnowledgeSource.id == source_id)
-    )
-    source = result.scalar_one_or_none()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-    
-    # Update fields
-    update_data = source_data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(source, field, value)
-    
+    db.add(knowledge_source)
     await db.commit()
-    await db.refresh(source)
-    
-    return KnowledgeSourceResponse.model_validate(source)
+    await db.refresh(knowledge_source)
+
+    # Process in background
+    if source.source_type == "text" and source.content:
+        background_tasks.add_task(
+            process_text_source,
+            str(knowledge_source.id),
+            source.content,
+        )
+    elif source.source_type == "url" and source.url:
+        background_tasks.add_task(
+            process_url_source,
+            str(knowledge_source.id),
+            source.url,
+        )
+
+    return {
+        "id": str(knowledge_source.id),
+        "name": knowledge_source.name,
+        "status": knowledge_source.status,
+    }
 
 
-@router.delete("/{source_id}", status_code=204)
-async def delete_source(
-    source_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+@router.post("/bots/{bot_id}/sources/upload")
+async def upload_knowledge_file(
+    bot_id: int,
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Delete knowledge source and all chunks."""
+    """Upload a file as knowledge source"""
+    # Verify bot ownership
     result = await db.execute(
-        select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+        select(Bot).where(Bot.id == bot_id, Bot.owner_id == current_user.id)
+    )
+    bot = result.scalar_one_or_none()
+
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+
+    # Save file
+    import os
+    from pathlib import Path
+
+    upload_dir = Path("/tmp/knowledge_uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = upload_dir / f"{bot_id}_{file.filename}"
+
+    content = await file.read()
+    file_path.write_bytes(content)
+
+    # Create source
+    knowledge_source = KnowledgeSource(
+        bot_id=bot_id,
+        name=file.filename,
+        source_type="file",
+        file_path=str(file_path),
+        status="pending",
+        metadata={"created_by": str(current_user.id)},
+    )
+
+    db.add(knowledge_source)
+    await db.commit()
+    await db.refresh(knowledge_source)
+
+    # Process in background
+    if background_tasks:
+        background_tasks.add_task(
+            process_file_source,
+            str(knowledge_source.id),
+            str(file_path),
+        )
+
+    return {
+        "id": str(knowledge_source.id),
+        "name": knowledge_source.name,
+        "status": knowledge_source.status,
+    }
+
+
+@router.delete("/bots/{bot_id}/sources/{source_id}")
+async def delete_knowledge_source(
+    bot_id: int,
+    source_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a knowledge source"""
+    result = await db.execute(
+        select(KnowledgeSource)
+        .where(
+            KnowledgeSource.id == source_id,
+            KnowledgeSource.bot_id == bot_id,
+        )
     )
     source = result.scalar_one_or_none()
-    
+
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    
-    # Verify access
-    bot_result = await db.execute(select(Bot).where(Bot.id == source.bot_id))
-    bot = bot_result.scalar_one()
-    
-    if str(bot.owner_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
+
     await db.delete(source)
     await db.commit()
 
-
-# ─────────────────────────────────────────────────────────────
-# Document Upload
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/upload", response_model=DocumentUploadResponse)
-async def upload_document(
-    bot_id: uuid.UUID,
-    file: UploadFile = File(...),
-    name: str = Query(..., min_length=1),
-    description: Optional[str] = None,
-    chunk_size: int = Query(500, ge=100, le=2000),
-    chunk_overlap: int = Query(50, ge=0, le=500),
-    db: Annotated[AsyncSession, Depends(get_db)] = Depends(get_db),
-    current_user: Annotated[dict, Depends(get_current_user)] = Depends(get_current_user),
-):
-    """Upload a document to knowledge base."""
-    # Verify bot access
-    bot_result = await db.execute(select(Bot).where(Bot.id == bot_id))
-    bot = bot_result.scalar_one_or_none()
-    
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if str(bot.owner_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Check file extension
-    filename = file.filename or "unknown"
-    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type not allowed. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
-        )
-    
-    # Read file
-    content = await file.read()
-    file_size = len(content)
-    
-    # Create source
-    source = KnowledgeSource(
-        bot_id=bot_id,
-        name=name,
-        description=description,
-        source_type="file",
-        file_name=filename,
-        file_size=file_size,
-        mime_type=file.content_type,
-        file_path=f"/tmp/{uuid.uuid4()}_{filename}",  # Will be moved later
-        status="pending",
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-    
-    db.add(source)
-    await db.commit()
-    await db.refresh(source)
-    
-    # TODO: Queue for processing (Celery/Redis)
-    # For now, just mark as ready (would be async in production)
-    source.status = "ready"
-    await db.commit()
-    
-    return DocumentUploadResponse(
-        source_id=source.id,
-        file_name=filename,
-        file_size=file_size,
-        status="pending",
-        message="Document uploaded. Processing will begin shortly."
-    )
+    return {"ok": True}
 
 
-# ─────────────────────────────────────────────────────────────
-# Search
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/search", response_model=KnowledgeSearchResponse)
+@router.post("/bots/{bot_id}/search", response_model=KnowledgeSearchResponse)
 async def search_knowledge(
+    bot_id: int,
     request: KnowledgeSearchRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Search knowledge base for relevant chunks."""
-    # Get user's bot IDs
-    bot_query = select(KnowledgeSource.bot_id).join(Bot).where(
-        Bot.owner_id == uuid.UUID(current_user["id"])
-    )
-    
-    query = select(KnowledgeChunk).join(KnowledgeSource).where(
-        KnowledgeSource.bot_id.in_(bot_query),
-        KnowledgeSource.is_active == True,
-        KnowledgeSource.status == "ready",
-    )
-    
-    if request.source_ids:
-        query = query.where(KnowledgeChunk.source_id.in_(request.source_ids))
-    
-    # TODO: Use vector search (Qdrant/pgvector)
-    # For now, simple text search
-    query = query.where(
-        KnowledgeChunk.content.ilike(f"%{request.query}%")
-    ).limit(request.limit)
-    
-    result = await db.execute(query)
-    chunks = result.scalars().all()
-    
-    # Get source names
-    source_ids = set(c.source_id for c in chunks)
-    sources_result = await db.execute(
-        select(KnowledgeSource).where(KnowledgeSource.id.in_(source_ids))
-    )
-    sources = {s.id: s.name for s in sources_result.scalars().all()}
-    
-    return KnowledgeSearchResponse(
-        chunks=[KnowledgeChunkResponse.model_validate(c) for c in chunks],
-        sources=sources,
-        total=len(chunks),
+    """Search knowledge base for a bot"""
+    # Create store
+    store = PostgresKnowledgeStore(db)
+
+    # Create retriever
+    retriever = KnowledgeRetriever(store)
+
+    # Search
+    chunks = await retriever.retrieve(
         query=request.query,
+        bot_id=str(bot_id),
+        limit=request.limit,
+    )
+
+    # Get formatted context
+    context = await retriever.get_context(
+        query=request.query,
+        bot_id=str(bot_id),
+        max_chunks=request.limit,
+    )
+
+    return KnowledgeSearchResponse(
+        chunks=[
+            {
+                "id": c.id,
+                "content": c.content,
+                "score": c.score,
+                "metadata": c.metadata,
+            }
+            for c in chunks
+        ],
+        context=context,
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# Chunks
-# ─────────────────────────────────────────────────────────────
-
-@router.get("/{source_id}/chunks", response_model=list[KnowledgeChunkResponse])
-async def list_chunks(
-    source_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
-    page: int = Query(1, ge=1),
-    page_size: int = Query(100, ge=1, le=500),
+@router.get("/bots/{bot_id}/stats")
+async def get_knowledge_stats(
+    bot_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """List chunks for a source."""
-    # Verify access
-    source_result = await db.execute(
-        select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+    """Get knowledge base statistics"""
+    # Count sources
+    sources_result = await db.execute(
+        select(KnowledgeSource).where(KnowledgeSource.bot_id == bot_id)
     )
-    source = source_result.scalar_one_or_none()
-    
-    if not source:
-        raise HTTPException(status_code=404, detail="Source not found")
-    
-    bot_result = await db.execute(select(Bot).where(Bot.id == source.bot_id))
-    bot = bot_result.scalar_one()
-    
-    if str(bot.owner_id) != current_user["id"] and current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get chunks
-    result = await db.execute(
-        select(KnowledgeChunk)
-        .where(KnowledgeChunk.source_id == source_id)
-        .order_by(KnowledgeChunk.chunk_index)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-    )
-    chunks = result.scalars().all()
-    
-    return [KnowledgeChunkResponse.model_validate(c) for c in chunks]
+    sources = sources_result.scalars().all()
+
+    total_chunks = sum(s.chunk_count or 0 for s in sources)
+
+    return {
+        "source_count": len(sources),
+        "chunk_count": total_chunks,
+        "sources": [
+            {
+                "id": str(s.id),
+                "name": s.name,
+                "status": s.status,
+                "chunk_count": s.chunk_count or 0,
+            }
+            for s in sources
+        ],
+    }
+
+
+# Background processing functions
+async def process_text_source(source_id: str, content: str):
+    """Process text content into chunks"""
+    from app.core.database import async_session_maker
+
+    async with async_session_maker() as db:
+        try:
+            # Update status
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                return
+
+            source.status = "indexing"
+            await db.commit()
+
+            # Process text
+            processor = DocumentProcessor()
+            chunks = processor.process_text(content, metadata={"source_id": source_id})
+
+            # Create store and add chunks
+            store = PostgresKnowledgeStore(db)
+            from app.knowledge.base import KnowledgeChunk
+
+            kb_chunks = [
+                KnowledgeChunk(
+                    id=f"{source_id}_{i}",
+                    content=c.content,
+                    metadata={**c.metadata, "source_id": source_id},
+                )
+                for i, c in enumerate(chunks)
+            ]
+
+            await store.add_chunks(source_id, kb_chunks)
+
+            # Update source
+            source.chunk_count = len(kb_chunks)
+            source.total_chars = len(content)
+            source.status = "ready"
+            await db.commit()
+
+            logger.info(f"Processed text source {source_id}: {len(kb_chunks)} chunks")
+
+        except Exception as e:
+            logger.exception(f"Failed to process text source {source_id}")
+            source.status = "error"
+            source.error_message = str(e)
+            await db.commit()
+
+
+async def process_file_source(source_id: str, file_path: str):
+    """Process a file into chunks"""
+    from app.core.database import async_session_maker
+
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                return
+
+            source.status = "indexing"
+            await db.commit()
+
+            # Process file
+            processor = DocumentProcessor()
+            chunks = processor.process_file(file_path)
+
+            # Create store and add chunks
+            store = PostgresKnowledgeStore(db)
+            from app.knowledge.base import KnowledgeChunk
+
+            kb_chunks = [
+                KnowledgeChunk(
+                    id=f"{source_id}_{i}",
+                    content=c.content,
+                    metadata={**c.metadata, "source_id": source_id},
+                )
+                for i, c in enumerate(chunks)
+            ]
+
+            await store.add_chunks(source_id, kb_chunks)
+
+            # Update source
+            source.chunk_count = len(kb_chunks)
+            source.status = "ready"
+            await db.commit()
+
+            logger.info(f"Processed file source {source_id}: {len(kb_chunks)} chunks")
+
+        except Exception as e:
+            logger.exception(f"Failed to process file source {source_id}")
+            source.status = "error"
+            source.error_message = str(e)
+            await db.commit()
+
+
+async def process_url_source(source_id: str, url: str):
+    """Process URL content into chunks"""
+    from app.core.database import async_session_maker
+    import httpx
+
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                return
+
+            source.status = "indexing"
+            await db.commit()
+
+            # Fetch URL
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url)
+                html_content = response.text
+
+            # Process HTML
+            processor = DocumentProcessor()
+            chunks = processor.process_url(url, html_content)
+
+            # Create store and add chunks
+            store = PostgresKnowledgeStore(db)
+            from app.knowledge.base import KnowledgeChunk
+
+            kb_chunks = [
+                KnowledgeChunk(
+                    id=f"{source_id}_{i}",
+                    content=c.content,
+                    metadata={**c.metadata, "source_id": source_id},
+                )
+                for i, c in enumerate(chunks)
+            ]
+
+            await store.add_chunks(source_id, kb_chunks)
+
+            # Update source
+            source.chunk_count = len(kb_chunks)
+            source.status = "ready"
+            await db.commit()
+
+            logger.info(f"Processed URL source {source_id}: {len(kb_chunks)} chunks")
+
+        except Exception as e:
+            logger.exception(f"Failed to process URL source {source_id}")
+            source.status = "error"
+            source.error_message = str(e)
+            await db.commit()
