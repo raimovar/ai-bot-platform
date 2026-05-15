@@ -15,6 +15,7 @@ httpx==0.26.0
 python-dotenv==1.0.1
 orjson==3.9.13
 tenacity==8.2.3
+pydantic-settings==2.1.0
 
 # Telegram
 aiogram==3.4.1

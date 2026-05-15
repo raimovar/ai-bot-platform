@@ -1,0 +1,15 @@
+http:
+  middlewares:
+    backend-stripprefix:
+      stripPrefix:
+        prefixes:
+          - /api
+  routers:
+    backend:
+      rule: "PathPrefix(\`/api\`)"
+      service: backend
+      middlewares:
+        - backend-stripprefix
+    frontend:
+      rule: "PathPrefix(\`/\`)"
+      service: frontend
