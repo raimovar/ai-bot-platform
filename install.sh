@@ -125,6 +125,37 @@ setup_docker() {
     log_success "Docker images built"
 }
 
+create_admin_user() {
+    log_info "Creating admin user..."
+    
+    # Wait for postgres to be ready
+    local max_attempts=30
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if docker exec aibot_postgres pg_isready -U aibot -d aibotdb &>/dev/null; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    
+    # Create admin user with pre-generated bcrypt hash for "admin123"
+    docker exec aibot_postgres psql -U aibot -d aibotdb -c "
+    INSERT INTO users (id, email, username, password_hash, full_name, role, is_active, max_bots) 
+    VALUES (
+        gen_random_uuid(), 
+        'admin@aibot.local', 
+        'admin', 
+        '\$2b\$12\$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYL0Bq8Mm/G', 
+        'Admin', 
+        'admin', 
+        true, 
+        100
+    ) ON CONFLICT (email) DO NOTHING;" &>/dev/null || true
+    
+    log_success "Admin user created"
+}
+
 start_platform() {
     log_info "Starting AI Bot Platform..."
     
@@ -151,7 +182,7 @@ print_next_steps() {
     echo "Access the UI: http://$(curl -s ifconfig.me 2>/dev/null || echo 'localhost'):3000"
     echo ""
     echo "Default login:"
-    echo "  Email: admin@example.com"
+    echo "  Email: admin@aibot.local"
     echo "  Password: admin123"
     echo ""
     echo "Add your API keys:"
@@ -174,6 +205,7 @@ main() {
     install_platform
     setup_docker
     start_platform
+    create_admin_user
     print_next_steps
 }
 
