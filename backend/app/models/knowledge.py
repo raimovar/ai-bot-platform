@@ -42,6 +42,7 @@ class KnowledgeSource(Base):
 
     # Relationships
     chunks = relationship("KnowledgeChunk", back_populates="source", cascade="all, delete-orphan")
+    bot = relationship("Bot", back_populates="knowledge_sources")
 
     def __repr__(self):
         return f"<KnowledgeSource {self.id} name={self.name}>"
