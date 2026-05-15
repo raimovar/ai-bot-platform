@@ -38,6 +38,7 @@ class Session(Base):
 
     # Relationships
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
+    bot = relationship("Bot", back_populates="sessions")
 
     def __repr__(self):
         return f"<Session {self.id} bot={self.bot_id} chat={self.external_id}>"
