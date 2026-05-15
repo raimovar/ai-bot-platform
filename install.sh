@@ -145,16 +145,25 @@ setup_docker() {
         fi
     fi
 
-    cd "$INSTALL_DIR"
+    # Absolute path to compose file
+    COMPOSE_FILE="$INSTALL_DIR/docker/docker-compose.yml"
+
+    # Verify compose file exists
+    if [ ! -f "$COMPOSE_FILE" ]; then
+        log_error "Docker Compose file not found: $COMPOSE_FILE"
+        ls -la "$INSTALL_DIR/" || true
+        ls -la "$INSTALL_DIR/docker/" || true
+        exit 1
+    fi
 
     # Create necessary directories
-    mkdir -p docker/infra/traefik/certs
-    mkdir -p docker/infra/nginx
-    mkdir -p docker/infra/redis
-    mkdir -p docker/infra/postgres
+    mkdir -p "$INSTALL_DIR/docker/infra/traefik/certs"
+    mkdir -p "$INSTALL_DIR/docker/infra/nginx"
+    mkdir -p "$INSTALL_DIR/docker/infra/redis"
+    mkdir -p "$INSTALL_DIR/docker/infra/postgres"
 
-    # Build and start services
-    $DOCKER_COMPOSE -f docker/docker-compose.yml build
+    # Build services from the correct directory
+    (cd "$INSTALL_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml build)
 
     log_success "Docker images built"
 }
@@ -162,17 +171,15 @@ setup_docker() {
 start_platform() {
     log_info "Starting AI Bot Platform..."
 
-    cd "$INSTALL_DIR"
-
-    # Start services
-    $DOCKER_COMPOSE -f docker/docker-compose.yml up -d
+    # Start services from the correct directory
+    (cd "$INSTALL_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml up -d)
 
     # Wait for services
     log_info "Waiting for services to be ready..."
     sleep 10
 
     # Check status
-    $DOCKER_COMPOSE -f docker/docker-compose.yml ps
+    (cd "$INSTALL_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml ps)
 
     log_success "Platform started!"
 }
