@@ -92,7 +92,26 @@ install_platform() {
     # Create environment file
     if [ ! -f ".env" ]; then
         log_info "Creating .env file..."
-        cp .env.example .env
+        if [ -f "docker/.env.example" ]; then
+            cp docker/.env.example .env
+        else
+            log_warning "No .env.example found, creating default..."
+            cat > .env << 'EOF'
+# AI Bot Platform Environment
+DEBUG=false
+LOG_LEVEL=INFO
+SECRET_KEY=changeme
+TELEGRAM_WEBHOOK_SECRET=changeme
+POSTGRES_USER=aibot
+POSTGRES_PASSWORD=changeme
+POSTGRES_DB=aibotdb
+REDIS_PASSWORD=changeme
+MINIO_USER=minioadmin
+MINIO_PASSWORD=changeme
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+EOF
+        fi
 
         # Generate secrets
         SECRET_KEY=$(openssl rand -hex 32)
