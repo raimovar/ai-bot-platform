@@ -133,6 +133,18 @@ EOF
 setup_docker() {
     log_info "Setting up Docker services..."
 
+    # Determine docker compose command
+    if command -v docker &> /dev/null; then
+        if docker compose version &> /dev/null 2>&1; then
+            DOCKER_COMPOSE="docker compose"
+        elif command -v docker-compose &> /dev/null; then
+            DOCKER_COMPOSE="docker-compose"
+        else
+            log_error "Docker Compose not found"
+            exit 1
+        fi
+    fi
+
     cd "$INSTALL_DIR"
 
     # Create necessary directories
@@ -142,7 +154,7 @@ setup_docker() {
     mkdir -p docker/infra/postgres
 
     # Build and start services
-    docker compose -f docker/docker-compose.yml build
+    $DOCKER_COMPOSE -f docker/docker-compose.yml build
 
     log_success "Docker images built"
 }
@@ -153,14 +165,14 @@ start_platform() {
     cd "$INSTALL_DIR"
 
     # Start services
-    docker compose -f docker/docker-compose.yml up -d
+    $DOCKER_COMPOSE -f docker/docker-compose.yml up -d
 
     # Wait for services
     log_info "Waiting for services to be ready..."
     sleep 10
 
     # Check status
-    docker compose -f docker/docker-compose.yml ps
+    $DOCKER_COMPOSE -f docker/docker-compose.yml ps
 
     log_success "Platform started!"
 }
