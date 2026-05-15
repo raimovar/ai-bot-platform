@@ -1,25 +1,96 @@
-version: "3.8"
+# ═══════════════════════════════════════════════════════════════
+# Development Overrides
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ═══════════════════════════════════════════════════════════════
 
-# Development overrides
 services:
+  # ─────────────────────────────────────────────────────────
+  # Backend - Development Mode
+  # ─────────────────────────────────────────────────────────
   backend:
     build:
       context: ../backend
-      target: development
-    volumes:
-      - ../backend:/app
+      dockerfile: Dockerfile.dev
     environment:
       - DEBUG=true
-  
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    volumes:
+      - ../backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    healthcheck:
+      disabled: true
+
+  # ─────────────────────────────────────────────────────────
+  # Bot Runtime - Development Mode
+  # ─────────────────────────────────────────────────────────
+  bot-runtime:
+    build:
+      context: ../bot-runtime
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ../bot-runtime:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload --reload-dir app
+    healthcheck:
+      disabled: true
+
+  # ─────────────────────────────────────────────────────────
+  # AI Gateway - Development Mode
+  # ─────────────────────────────────────────────────────────
+  ai-gateway:
+    build:
+      context: ../ai-gateway
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ../ai-gateway:/app
+    command: uvicorn gateway.server:app --host 0.0.0.0 --port 8002 --reload
+    healthcheck:
+      disabled: true
+
+  # ─────────────────────────────────────────────────────────
+  # Frontend - Development Mode
+  # ─────────────────────────────────────────────────────────
   frontend:
     build:
       context: ../frontend
-      target: development
+      dockerfile: Dockerfile.dev
     volumes:
       - ../frontend:/app
       - /app/node_modules
-    command: npm run dev
-  
-  bot-runtime:
-    volumes:
-      - ../bot-runtime:/app
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+    command: npm run dev -- --host --port 3000
+    ports:
+      - "3000:3000"
+    healthcheck:
+      disabled: true
+
+  # ─────────────────────────────────────────────────────────
+  # Traefik - Development Dashboard
+  # ─────────────────────────────────────────────────────────
+  traefik:
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+
+  # ─────────────────────────────────────────────────────────
+  # Database - Expose Ports for Dev Tools
+  # ─────────────────────────────────────────────────────────
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  # ─────────────────────────────────────────────────────────
+  # MinIO Console - Expose for Dev
+  # ─────────────────────────────────────────────────────────
+  minio:
+    profiles:
+      - storage
+    ports:
+      - "9000:9000"
+      - "9001:9001"

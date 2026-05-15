@@ -1,47 +1,160 @@
-# AI Bot Platform - Production Stack
-# Single command: docker-compose up -d
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI Bot Platform - Production Docker Compose
+# 
+# Usage:
+#   docker-compose up -d                    # Start all services
+#   docker-compose --profile local-llm up   # Include Ollama
+#   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+#
+# ═══════════════════════════════════════════════════════════════════════════════
 
 name: ai-bot-platform
 
 services:
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   # Traefik - Reverse Proxy & Load Balancer
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   traefik:
     image: traefik:v3.0
     container_name: aibot_traefik
     restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--log.level=INFO"
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"  # Dashboard (dev only)
+      - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./infra/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
-      - traefik_certs:/etc/traefik/certs
+      - traefik_certs:/certs
     networks:
       - aibot_network
-
-  # ─────────────────────────────────────────────
-  # Frontend - React SPA
-  # ─────────────────────────────────────────────
-  frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-    container_name: aibot_frontend
-    restart: unless-stopped
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/overview"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PostgreSQL with pgvector
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: ankane/pgvector:v0.5.1
+    container_name: aibot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aibot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-aibotdb}
+      POSTGRES_INITDB_ARGS: "-c max_connections=200"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
     networks:
       - aibot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aibot} -d ${POSTGRES_DB:-aibotdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: >
+      postgres
+      -c shared_preload_libraries=vector
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
 
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis - Cache, Sessions, Queues
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aibot_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --timeout 0
+      --tcp-keepalive 300
+    volumes:
+      - redis_data:/data
+      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    networks:
+      - aibot_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # MinIO - S3-compatible Object Storage (for Knowledge Base files)
+  # ─────────────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: aibot_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+      MINIO_SITE_NAME: "ai-bot-platform"
+      MINIO_DEFAULT_BUCKETS: "aibot-knowledge,aibot-uploads"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    networks:
+      - aibot_network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    profiles:
+      - storage
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Backend API - FastAPI
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ../backend
@@ -49,27 +162,56 @@ services:
     container_name: aibot_backend
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0
+      - APP_NAME=AI Bot Platform
+      - APP_VERSION=1.0.0
+      - DEBUG=${DEBUG:-false}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY required}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-aibot}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-aibotdb}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - AI_GATEWAY_URL=http://ai-gateway:8002
       - BOT_RUNTIME_URL=http://bot-runtime:8001
-      - SECRET_KEY=${SECRET_KEY}
-      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)"
-      - "traefik.http.services.backend.loadbalancer.server.port=8000"
-    depends_on:
-      - postgres
-      - redis
-      - ai-gateway
-      - bot-runtime
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - STORAGE_URL=http://minio:9000
+      - STORAGE_ACCESS_KEY=${MINIO_USER:-minioadmin}
+      - STORAGE_SECRET_KEY=${MINIO_PASSWORD:-minioadmin}
+      - STORAGE_BUCKET=aibot-knowledge
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-60}
+    volumes:
+      - backend_logs:/app/logs
     networks:
       - aibot_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-gateway:
+        condition: service_started
+      bot-runtime:
+        condition: service_started
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`)"
+      - "traefik.http.routers.backend.middlewares=backend-stripprefix"
+      - "traefik.http.middlewares.backend-stripprefix.stripprefix.prefixes=/api"
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   # Bot Runtime Engine
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   bot-runtime:
     build:
       context: ../bot-runtime
@@ -77,22 +219,31 @@ services:
     container_name: aibot_bot_runtime
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-aibot}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-aibotdb}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - AI_GATEWAY_URL=http://ai-gateway:8002
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - bot_logs:/app/logs
-    depends_on:
-      - redis
-      - postgres
-      - ai-gateway
     networks:
       - aibot_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   # AI Gateway - Unified LLM Interface
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
   ai-gateway:
     build:
       context: ../ai-gateway
@@ -100,66 +251,59 @@ services:
     container_name: aibot_ai_gateway
     restart: unless-stopped
     environment:
-      - REDIS_URL=redis://redis:6379/1
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
-      - HF_TOKEN=${HF_TOKEN}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ai_cache:/app/cache
     networks:
       - aibot_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
 
-  # ─────────────────────────────────────────────
-  # PostgreSQL with pgvector
-  # ─────────────────────────────────────────────
-  postgres:
-    image: ankane/pgvector:v0.5.1
-    container_name: aibot_postgres
+  # ─────────────────────────────────────────────────────────────────────────
+  # Frontend - React SPA
+  # ─────────────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: aibot_frontend
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - VITE_API_URL=/api
     networks:
       - aibot_network
+    depends_on:
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.priority=1"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  # ─────────────────────────────────────────────
-  # Redis - Cache, Sessions, Queues
-  # ─────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: aibot_redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
-      - ./infra/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    networks:
-      - aibot_network
-
-  # ─────────────────────────────────────────────
-  # MinIO - S3-compatible Object Storage
-  # ─────────────────────────────────────────────
-  minio:
-    image: minio/minio:latest
-    container_name: aibot_minio
-    restart: unless-stopped
-    environment:
-      - MINIO_ROOT_USER=${MINIO_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_PASSWORD}
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
-    networks:
-      - aibot_network
-
-  # ─────────────────────────────────────────────
-  # Ollama - Local LLM (Optional)
-  # ─────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────────────────────────
+  # Ollama - Local LLM (Optional - start with --profile local-llm)
+  # ─────────────────────────────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
     container_name: aibot_ollama
@@ -170,18 +314,72 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - aibot_network
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/root/.ollama/models
+      - OLLAMA_NUM_PARALLEL=3
+      - OLLAMA_MAX_LOADED_MODELS=2
     profiles:
-      - local-llm  # Start with: docker-compose --profile local-llm up
+      - local-llm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # Qdrant - Vector Database (Optional - start with --profile vector)
+  # ─────────────────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aibot_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # GRPC
+      - "6334:6334"   # REST
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - aibot_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - vector
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Networks
+# ═══════════════════════════════════════════════════════════════════════════════
 networks:
   aibot_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Volumes
+# ═══════════════════════════════════════════════════════════════════════════════
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
   minio_data:
+    driver: local
   ollama_data:
+    driver: local
+  qdrant_data:
+    driver: local
   traefik_certs:
+    driver: local
   ai_cache:
+    driver: local
   bot_logs:
+    driver: local
+  backend_logs:
+    driver: local

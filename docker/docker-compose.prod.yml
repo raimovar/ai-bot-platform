@@ -1,23 +1,153 @@
-version: "3.8"
+# ═══════════════════════════════════════════════════════════════
+# Production Overrides
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# ═══════════════════════════════════════════════════════════════
 
-# Production overrides
 services:
-  traefik:
-    command:
-      - --api.insecure=true
-      - --log.level=INFO
-      - --accesslog
-    ports:
-      - "80:80"
-      - "443:443"
-  
+  # ─────────────────────────────────────────────────────────
+  # Production Restart Policies
+  # ─────────────────────────────────────────────────────────
   backend:
     restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-  
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  bot-runtime:
+    restart: always
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  ai-gateway:
+    restart: always
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
   frontend:
     restart: always
+    deploy:
+      replicas: 2
+
+  traefik:
+    restart: always
+
+  postgres:
+    restart: always
+    command: >
+      postgres
+      -c shared_preload_libraries=vector
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=128MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+
+  redis:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  minio:
+    restart: always
+    profiles:
+      - storage
+
+  # ─────────────────────────────────────────────────────────
+  # Production Logging
+  # ─────────────────────────────────────────────────────────
+  backend:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        compress: "true"
+
+  bot-runtime:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  ai-gateway:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  traefik:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ─────────────────────────────────────────────────────────
+  # Production Traefik
+  # ─────────────────────────────────────────────────────────
+  traefik:
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=:443"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.websecure.http.tls certResolver=letsencrypt"
+      - "--log.level=WARN"
+      - "--accesslog=true"
+
+  # ─────────────────────────────────────────────────────────
+  # Disable Dev Ports
+  # ─────────────────────────────────────────────────────────
+  postgres:
+    ports: []
+
+  redis:
+    ports: []
+
+  # ─────────────────────────────────────────────────────────
+  # Resource Limits for All Services
+  # ─────────────────────────────────────────────────────────
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G

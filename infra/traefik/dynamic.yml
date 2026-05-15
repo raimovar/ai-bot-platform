@@ -1,8 +1,133 @@
+# ═══════════════════════════════════════════════════════════════
+# Traefik Dynamic Configuration
+# ═══════════════════════════════════════════════════════════════
+
 http:
+  # ─────────────────────────────────────────────────────────
+  # Middlewares
+  # ─────────────────────────────────────────────────────────
   middlewares:
+    # Rate Limiting
     rate-limit:
       rateLimit:
         average: 100
         burst: 50
+        period: 1m
+    
+    rate-limit-api:
+      rateLimit:
+        average: 30
+        burst: 10
+        period: 1m
+    
+    # Compression
     compress:
-      compress: {}
+      compress:
+        excludedContentTypes:
+          - "text/event-stream"
+        minResponseBodyBytes: 1024
+    
+    # Security Headers
+    secure-headers:
+      headers:
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customFrameOptionsValue: "SAMEORIGIN"
+        customRequestHeaders:
+          X-Request-ID: "{{ .RequestID }}"
+    
+    # Retry
+    retry:
+      retry:
+        attempts: 3
+        initialInterval: 100ms
+    
+    # Circuit Breaker
+    circuit-breaker:
+      circuitBreaker:
+        expression: "NetworkErrorRatio > 0.30"
+    
+    # Auth Basic
+    basic-auth:
+      basicAuth:
+        users:
+          - "admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/"
+
+  # ─────────────────────────────────────────────────────────
+  # Services
+  # ─────────────────────────────────────────────────────────
+  services:
+    # Backend API
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+        healthCheck:
+          path: /health
+          interval: 30s
+          timeout: 3s
+    
+    # Bot Runtime
+    bot-runtime:
+      loadBalancer:
+        servers:
+          - url: "http://bot-runtime:8001"
+        healthCheck:
+          path: /health
+          interval: 30s
+    
+    # AI Gateway
+    ai-gateway:
+      loadBalancer:
+        servers:
+          - url: "http://ai-gateway:8002"
+    
+    # Frontend
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+
+  # ─────────────────────────────────────────────────────────
+  # Routers
+  # ─────────────────────────────────────────────────────────
+  routers:
+    # Frontend (catch-all)
+    frontend:
+      rule: "PathPrefix(`/`)"
+      service: frontend
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - secure-headers
+        - compress
+    
+    # API (with auth for admin endpoints)
+    api:
+      rule: "PathPrefix(`/api`)"
+      service: backend
+      entryPoints:
+        - web
+        - websecure
+      middlewares:
+        - rate-limit-api
+        - compress
+      tls: {}
+
+  # ─────────────────────────────────────────────────────────
+  # Services Metrics
+  # ─────────────────────────────────────────────────────────
+tcp:
+  services:
+    # No TCP services yet
+udp:
+  services:
+    # No UDP services yet
