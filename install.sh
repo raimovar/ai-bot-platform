@@ -93,38 +93,80 @@ install_platform() {
     # Create environment file
     if [ ! -f ".env" ]; then
         log_info "Creating .env file..."
-        if [ -f ".env.example" ]; then
-            cp .env.example .env
-        elif [ -f "docker/.env.example" ]; then
-            cp docker/.env.example .env
-        else
-            log_warning "No .env.example found, creating default..."
-            cat > .env << 'EOF'
-# AI Bot Platform Environment
-DEBUG=false
-LOG_LEVEL=INFO
-SECRET_KEY=changeme
-TELEGRAM_WEBHOOK_SECRET=changeme
-POSTGRES_USER=aibot
-POSTGRES_PASSWORD=changeme
-POSTGRES_DB=aibotdb
-REDIS_PASSWORD=changeme
-MINIO_USER=minioadmin
-MINIO_PASSWORD=changeme
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-EOF
-        fi
-
-        # Generate secrets
+        
+        # Generate secure random values
         SECRET_KEY=$(openssl rand -hex 32)
         TELEGRAM_SECRET=$(openssl rand -hex 32)
+        POSTGRES_PASSWORD=$(openssl rand -hex 16)
+        REDIS_PASSWORD=$(openssl rand -hex 16)
+        MINIO_PASSWORD=$(openssl rand -hex 16)
+        
+        # Create clean .env file with proper values
+        cat > .env << EOF
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI Bot Platform - Environment Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
 
-        # Update .env
-        sed -i "s/SECRET_KEY=.*/SECRET_KEY=$SECRET_KEY/" .env
-        sed -i "s/TELEGRAM_WEBHOOK_SECRET=.*/TELEGRAM_WEBHOOK_SECRET=$TELEGRAM_SECRET/" .env
-        sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
-        sed -i "s/MINIO_PASSWORD=.*/MINIO_PASSWORD=$(openssl rand -hex 16)/" .env
+# ─────────────────────────────────────────────────────────────────────────────
+# General
+# ─────────────────────────────────────────────────────────────────────────────
+DEBUG=false
+LOG_LEVEL=INFO
+DOMAIN=localhost
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Security (REQUIRED)
+# ─────────────────────────────────────────────────────────────────────────────
+SECRET_KEY=${SECRET_KEY}
+TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_SECRET}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PostgreSQL
+# ─────────────────────────────────────────────────────────────────────────────
+POSTGRES_USER=aibot
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=aibotdb
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Redis
+# ─────────────────────────────────────────────────────────────────────────────
+REDIS_PASSWORD=${REDIS_PASSWORD}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MinIO (S3-compatible Storage)
+# ─────────────────────────────────────────────────────────────────────────────
+MINIO_USER=minioadmin
+MINIO_PASSWORD=${MINIO_PASSWORD}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Providers (fill in your API keys)
+# ─────────────────────────────────────────────────────────────────────────────
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+HF_TOKEN=
+OLLAMA_BASE_URL=http://ollama:11434
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CORS & Rate Limiting
+# ─────────────────────────────────────────────────────────────────────────────
+CORS_ORIGINS=http://localhost:3000,http://localhost
+RATE_LIMIT_PER_MINUTE=60
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional: Monitoring
+# ─────────────────────────────────────────────────────────────────────────────
+# SENTRY_DSN=https://key@sentry.io/project
+# PROMETHEUS_ENABLED=true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional: Email
+# ─────────────────────────────────────────────────────────────────────────────
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_USER=your@email.com
+# SMTP_PASSWORD=
+# SMTP_FROM=ai-bot@yourdomain.com
+EOF
     fi
 
     log_success "Platform installed at $INSTALL_DIR"
