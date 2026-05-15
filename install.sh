@@ -82,7 +82,8 @@ install_platform() {
     # Clone or update repo
     if [ -d ".git" ]; then
         log_info "Updating existing installation..."
-        git pull origin main
+        BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "master")
+        git pull origin "$BRANCH" || git pull origin master
     else
         log_info "Cloning repository..."
         git clone "$REPO_URL" "$INSTALL_DIR"
