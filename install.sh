@@ -93,7 +93,9 @@ install_platform() {
     # Create environment file
     if [ ! -f ".env" ]; then
         log_info "Creating .env file..."
-        if [ -f "docker/.env.example" ]; then
+        if [ -f ".env.example" ]; then
+            cp .env.example .env
+        elif [ -f "docker/.env.example" ]; then
             cp docker/.env.example .env
         else
             log_warning "No .env.example found, creating default..."
