@@ -146,7 +146,7 @@ create_admin_user() {
         gen_random_uuid(), 
         'admin@aibot.local', 
         'admin', 
-        '\$2b\$12\$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYL0Bq8Mm/G', 
+        '$2b$12$GueqFQOg0ShgxQwz9OMvyO2PkqJq6VL6pGIO/V4Cxlvqfqbp8NW4K', 
         'Admin', 
         'admin', 
         true, 
