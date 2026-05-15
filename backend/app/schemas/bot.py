@@ -236,3 +236,119 @@ class BotStatsResponse(BaseModel):
     error_bots: int
     total_messages: int
     total_tokens: int
+
+
+# ─────────────────────────────────────────────────────────────
+# Telegram Schemas
+# ─────────────────────────────────────────────────────────────
+
+class BotTelegramConfig(BaseModel):
+    """Schema for Telegram configuration."""
+    telegram_token: str
+    webhook_url: Optional[str] = None
+    allowed_chats: list[int] = Field(default_factory=list)
+    disallowed_chats: list[int] = Field(default_factory=list)
+    allow_groups: bool = False
+    allow_channels: bool = False
+    bot_commands: list[dict] = Field(default_factory=list)
+
+
+class TelegramBotInfo(BaseModel):
+    """Schema for Telegram bot info."""
+    id: int
+    is_bot: bool
+    username: str
+    first_name: str
+    last_name: Optional[str] = None
+
+
+class WebhookInfoResponse(BaseModel):
+    """Schema for webhook info."""
+    url: Optional[str] = None
+    has_custom_certificate: bool = False
+    pending_update_count: int = 0
+    last_error_message: Optional[str] = None
+    max_connections: Optional[int] = None
+
+
+class TelegramUpdateResponse(BaseModel):
+    """Schema for processing a Telegram update."""
+    ok: bool
+    message_id: Optional[int] = None
+    chat_id: Optional[int] = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Session Schemas
+# ─────────────────────────────────────────────────────────────
+
+class SessionResponse(BaseModel):
+    """Schema for session response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    bot_id: uuid.UUID
+    external_id: str
+    chat_type: str
+    chat_title: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    message_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageCreate(BaseModel):
+    """Schema for creating a message."""
+    role: str = Field(..., pattern="^(system|user|assistant|tool)$")
+    content: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class MessageResponse(BaseModel):
+    """Schema for message response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    session_id: uuid.UUID
+    role: str
+    content: str
+    model: Optional[str] = None
+    tokens_used: Optional[int] = None
+    latency_ms: Optional[int] = None
+    metadata: dict
+    created_at: datetime
+
+
+class SessionCreate(BaseModel):
+    """Schema for creating a session."""
+    bot_id: uuid.UUID
+    external_id: str
+    chat_type: str = "private"
+    chat_title: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Runtime Schemas
+# ─────────────────────────────────────────────────────────────
+
+class RuntimeStatusResponse(BaseModel):
+    """Schema for runtime status."""
+    running: bool
+    uptime_seconds: float
+    total_bots: int
+    running_bots: int
+    error_bots: int
+    bots: dict
+
+
+class RuntimeBotStatus(BaseModel):
+    """Schema for individual bot runtime status."""
+    status: str
+    messages_processed: int = 0
+    messages_failed: int = 0
+    avg_response_time: float = 0.0
+    last_message_at: Optional[str] = None
+    last_error: Optional[str] = None

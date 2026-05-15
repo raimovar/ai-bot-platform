@@ -1,284 +1,226 @@
 """
-Webhook endpoints for Telegram and other integrations.
+Telegram Webhook Endpoint
+Receives updates from Telegram bots
 """
-import uuid
-import hashlib
-import hmac
-from datetime import datetime, timezone
-from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, BackgroundTasks
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.core.config import settings
+import logging
+from typing import Optional
+from fastapi import APIRouter, Request, Header, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import redis.asyncio as redis
+
+from app.api.deps import get_db
 from app.models.bot import Bot
 from app.models.session import Session
 from app.models.message import Message
+from app.core.database import get_redis
+from app.schemas.bot import MessageCreate, SessionCreate
+from app.integrations.telegram.types import TelegramUpdate
+from app.integrations.telegram.client import TelegramClient, inline_keyboard, keyboard_button
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
-router = APIRouter()
+async def get_bot_by_token(db: AsyncSession, token: str) -> Optional[Bot]:
+    """Get bot by telegram token"""
+    result = await db.execute(
+        select(Bot).where(Bot.telegram_token == token, Bot.is_active == True)
+    )
+    return result.scalar_one_or_none()
 
 
-# ─────────────────────────────────────────────────────────────
-# Telegram Webhook
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/telegram/{bot_id}")
-async def telegram_webhook(
-    bot_id: uuid.UUID,
-    update: dict,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    background_tasks: BackgroundTasks,
-    x_telegram_bot_api_secret_token: str = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
-):
-    """
-    Receive Telegram webhook updates.
-    
-    This endpoint is called by Telegram when a bot receives a message.
-    """
-    import httpx
-    
-    # Get bot
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
-    bot = result.scalar_one_or_none()
-    
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if not bot.telegram_enabled:
-        raise HTTPException(status_code=400, detail="Telegram not enabled")
-    
-    # Verify secret token
-    if bot.telegram_token:
-        expected_token = hmac.new(
-            bot.telegram_token.encode(),
-            b"webhook_secret",
-            hashlib.sha256
-        ).hexdigest()
-        if x_telegram_bot_api_secret_token != expected_token:
-            # In production, use proper verification
-            pass
-    
-    # Parse update
-    message = update.get("message")
-    if not message:
-        return {"ok": True}
-    
-    chat = message.get("chat", {})
-    user = message.get("from", {})
-    text = message.get("text", "")
-    chat_id = str(chat.get("id"))
-    
-    # Check if chat is allowed
-    if bot.telegram_allowed_chats and chat_id not in bot.telegram_allowed_chats:
-        return {"ok": True, "message": "Chat not allowed"}
-    
-    # Get or create session
-    session_result = await db.execute(
+async def get_or_create_session(
+    db: AsyncSession,
+    bot_id: int,
+    chat_id: int,
+    chat_type: str,
+    chat_title: Optional[str] = None,
+    username: Optional[str] = None,
+    first_name: Optional[str] = None,
+) -> Session:
+    """Get or create a session for a chat"""
+    result = await db.execute(
         select(Session).where(
             Session.bot_id == bot_id,
-            Session.external_id == chat_id,
+            Session.external_id == str(chat_id),
         )
     )
-    session = session_result.scalar_one_or_none()
-    
+    session = result.scalar_one_or_none()
+
     if not session:
         session = Session(
             bot_id=bot_id,
-            external_id=chat_id,
-            session_type="telegram",
-            user_name=user.get("first_name"),
-            user_id=str(user.get("id")),
+            external_id=str(chat_id),
+            chat_type=chat_type,
+            chat_title=chat_title,
+            username=username,
+            first_name=first_name,
         )
         db.add(session)
         await db.commit()
         await db.refresh(session)
-        
-        # Send welcome message if configured
-        if bot.welcome_message:
-            await send_telegram_message(
-                bot.telegram_token,
-                chat_id,
-                bot.welcome_message
-            )
-    
-    # Save user message
-    user_msg = Message(
-        session_id=session.id,
-        role="user",
-        content=text,
-        source="telegram",
-        metadata={
-            "message_id": message.get("message_id"),
-            "user_id": user.get("id"),
-        }
-    )
-    db.add(user_msg)
-    session.message_count += 1
-    session.last_message_at = datetime.now(timezone.utc)
-    await db.commit()
-    
-    # Forward to bot runtime for processing
+    else:
+        # Update chat info
+        session.chat_type = chat_type
+        if chat_title:
+            session.chat_title = chat_title
+        session.username = username
+        session.first_name = first_name
+        await db.commit()
+
+    return session
+
+
+async def send_to_message_queue(
+    redis_client: redis.Redis,
+    bot_id: int,
+    session_id: int,
+    message_id: int,
+    role: str,
+    content: str,
+    metadata: dict,
+):
+    """Send message to Redis queue for processing"""
+    import json
+
+    payload = json.dumps({
+        "bot_id": bot_id,
+        "session_id": session_id,
+        "message_id": message_id,
+        "role": role,
+        "content": content,
+        "metadata": metadata,
+    })
+
+    await redis_client.lpush("bot:messages:queue", payload)
+    logger.debug(f"Message queued for bot {bot_id}")
+
+
+@router.post("/bot/{token}")
+async def receive_webhook(
+    token: str,
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Receive webhook update from Telegram
+
+    This endpoint is called by Telegram when a bot receives a message.
+    The bot_token in the path identifies which bot this update is for.
+    """
+    # Get bot from database
+    bot = await get_bot_by_token(db, token)
+    if not bot:
+        logger.warning(f"Webhook for unknown/inactive bot token")
+        raise HTTPException(status_code=404, detail="Bot not found or inactive")
+
+    # Parse update
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                f"{settings.BOT_RUNTIME_URL}/chat",
-                json={
-                    "bot_id": str(bot_id),
-                    "session_id": str(session.id),
-                    "message": text,
-                    "user_name": user.get("first_name"),
-                    "user_id": str(user.get("id")),
+        data = await request.json()
+        update = TelegramUpdate(**data)
+    except Exception as e:
+        logger.error(f"Failed to parse update: {e}")
+        raise HTTPException(status_code=400, detail="Invalid update format")
+
+    # Get message
+    message = update.effective_message
+    if not message:
+        return {"ok": True}  # Acknowledge non-message updates
+
+    # Skip messages from other bots
+    if message.from_user and message.from_user.is_bot and message.from_user.id != bot.telegram_token:
+        return {"ok": True}
+
+    # Get or create session
+    session = await get_or_create_session(
+        db=db,
+        bot_id=bot.id,
+        chat_id=message.chat.id,
+        chat_type=message.chat.type.value,
+        chat_title=message.chat.title,
+        username=message.from_user.username if message.from_user else None,
+        first_name=message.from_user.first_name if message.from_user else None,
+    )
+
+    # Handle commands
+    if message.is_command:
+        command = message.command
+        if command:
+            logger.info(f"Command /{command} from chat {message.chat.id}")
+
+            # Store command as message
+            msg_record = Message(
+                session_id=session.id,
+                role="user",
+                content=f"/{command} {message.text[len(command)+1:] if message.text and len(message.text) > len(command) else ''}".strip(),
+                model=bot.model_name,
+                metadata={
+                    "command": command,
+                    "message_id": message.message_id,
+                    "update_type": update.update_type.value if update.update_type else "message",
                 }
             )
-            result = response.json()
-            
-            # Send response to Telegram
-            await send_telegram_message(
-                bot.telegram_token,
-                chat_id,
-                result["response"]
-            )
-            
-            # Save assistant message
-            assistant_msg = Message(
-                session_id=session.id,
-                role="assistant",
-                content=result["response"],
-                model=result.get("model"),
-                output_tokens=result.get("tokens_used", 0),
-                source="telegram",
-            )
-            db.add(assistant_msg)
-            session.total_tokens += result.get("tokens_used", 0)
+            db.add(msg_record)
             await db.commit()
-            
-    except Exception as e:
-        # Send error message
-        await send_telegram_message(
-            bot.telegram_token,
-            chat_id,
-            f"❌ Error: {str(e)}"
-        )
-    
+
+            # Queue for processing
+            redis_client = await get_redis()
+            await send_to_message_queue(
+                redis_client,
+                bot.id,
+                session.id,
+                msg_record.id,
+                "user",
+                msg_record.content,
+                {"command": command, "chat_id": message.chat.id, "message_id": message.message_id},
+            )
+            await redis_client.close()
+
+            return {"ok": True}
+
+    # Store message
+    msg_record = Message(
+        session_id=session.id,
+        role="user",
+        content=message.content_text,
+        model=bot.model_name,
+        metadata={
+            "message_id": message.message_id,
+            "update_type": update.update_type.value if update.update_type else "message",
+        }
+    )
+    db.add(msg_record)
+    await db.commit()
+
+    # Queue for processing
+    redis_client = await get_redis()
+    await send_to_message_queue(
+        redis_client,
+        bot.id,
+        session.id,
+        msg_record.id,
+        "user",
+        message.content_text,
+        {"chat_id": message.chat.id, "message_id": message.message_id},
+    )
+    await redis_client.close()
+
     return {"ok": True}
 
 
-async def send_telegram_message(token: str, chat_id: str, text: str):
-    """Send message via Telegram Bot API."""
-    import httpx
-    
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            url,
-            json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "Markdown",
-            }
-        )
-
-
-# ─────────────────────────────────────────────────────────────
-# Webhook Registration
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/telegram/{bot_id}/set-webhook")
-async def set_telegram_webhook(
-    bot_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    webhook_url: str,
-):
-    """Set Telegram webhook URL for a bot."""
-    import httpx
-    
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
-    bot = result.scalar_one_or_none()
-    
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if not bot.telegram_token:
-        raise HTTPException(status_code=400, detail="Telegram token not set")
-    
-    # Set webhook
-    url = f"https://api.telegram.org/bot{bot.telegram_token}/setWebhook"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            url,
-            json={
-                "url": webhook_url,
-                "secret_token": bot.telegram_token[:32],
-            }
-        )
-        result = response.json()
-        
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to set webhook: {result}"
-            )
-    
-    bot.webhook_url = webhook_url
-    await db.commit()
-    
-    return {"ok": True, "webhook_url": webhook_url}
-
-
-@router.delete("/telegram/{bot_id}/webhook")
-async def delete_telegram_webhook(
-    bot_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    """Delete Telegram webhook for a bot."""
-    import httpx
-    
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
-    bot = result.scalar_one_or_none()
-    
-    if not bot:
-        raise HTTPException(status_code=404, detail="Bot not found")
-    
-    if not bot.telegram_token:
-        raise HTTPException(status_code=400, detail="Telegram token not set")
-    
-    # Delete webhook
-    url = f"https://api.telegram.org/bot{bot.telegram_token}/deleteWebhook"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url)
-        result = response.json()
-        
-        if not result.get("ok"):
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to delete webhook: {result}"
-            )
-    
-    bot.webhook_url = None
-    await db.commit()
-    
-    return {"ok": True}
-
-
-# ─────────────────────────────────────────────────────────────
-# Generic Webhook (for other integrations)
-# ─────────────────────────────────────────────────────────────
-
-@router.post("/generic/{source_id}")
-async def generic_webhook(
-    source_id: str,
-    payload: dict,
-    background_tasks: BackgroundTasks,
-):
-    """
-    Generic webhook endpoint for external integrations.
-    
-    Sources could be: discord, slack, web, custom, etc.
-    """
-    # TODO: Implement generic webhook handler
-    return {"ok": True, "message": "Webhook received"}
+@router.get("/bot/{token}/info")
+async def get_webhook_info(token: str):
+    """Get webhook info for debugging"""
+    bot = TelegramClient(token)
+    try:
+        info = await bot.get_webhook_info()
+        return {
+            "url": info.url,
+            "pending_update_count": info.pending_update_count,
+            "last_error_message": info.last_error_message,
+        }
+    finally:
+        await bot.close()
