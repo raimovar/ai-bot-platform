@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import redis.asyncio as redis
 
-from app.api.deps import get_db
+from app.core.database import get_db
 from app.models.bot import Bot
 from app.models.session import Session
 from app.models.message import Message
