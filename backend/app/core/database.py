@@ -3,6 +3,7 @@ Database connection and session management.
 """
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+import redis.asyncio as redis
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -74,3 +75,27 @@ async def init_db() -> None:
 async def close_db() -> None:
     """Close database connections."""
     await engine.dispose()
+
+
+# Redis connection pool
+_redis_pool: redis.ConnectionPool | None = None
+
+
+async def get_redis() -> redis.Redis:
+    """Get Redis client."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=20,
+        )
+    return redis.Redis(connection_pool=_redis_pool)
+
+
+async def close_redis() -> None:
+    """Close Redis connections."""
+    global _redis_pool
+    if _redis_pool:
+        await _redis_pool.disconnect()
+        _redis_pool = None
