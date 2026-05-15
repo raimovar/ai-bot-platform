@@ -12,7 +12,7 @@ import httpx
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import get_current_user, require_admin
+from app.core.security import get_current_user, get_current_admin
 from app.models.bot import Bot, BotTool
 from app.models.user import User
 from app.schemas.bot import (
