@@ -142,7 +142,7 @@ setup_docker() {
     mkdir -p docker/infra/postgres
 
     # Build and start services
-    docker compose build
+    docker compose -f docker/docker-compose.yml build
 
     log_success "Docker images built"
 }
@@ -153,14 +153,14 @@ start_platform() {
     cd "$INSTALL_DIR"
 
     # Start services
-    docker compose up -d
+    docker compose -f docker/docker-compose.yml up -d
 
     # Wait for services
     log_info "Waiting for services to be ready..."
     sleep 10
 
     # Check status
-    docker compose ps
+    docker compose -f docker/docker-compose.yml ps
 
     log_success "Platform started!"
 }
