@@ -32,23 +32,28 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     
-    # AI Gateway
-    AI_GATEWAY_URL: str = "http://localhost:8002"
-    
-    # Bot Runtime
-    BOT_RUNTIME_URL: str = "http://localhost:8001"
+    # AI Services
+    AI_GATEWAY_URL: str = "http://ai-gateway:8002"
+    BOT_RUNTIME_URL: str = "http://bot-runtime:8001"
     
     # Telegram
-    TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
+    TELEGRAM_WEBHOOK_SECRET: str = ""
     
-    # File Storage
+    # Storage
     STORAGE_URL: str = "http://localhost:9000"
     STORAGE_ACCESS_KEY: str = "minioadmin"
     STORAGE_SECRET_KEY: str = "minioadmin"
     STORAGE_BUCKET: str = "aibot-knowledge"
     
-    # CORS
-    CORS_ORIGINS: list[str] = ["*"]
+    # CORS - comma-separated string, converted to list
+    CORS_ORIGINS_RAW: str = "*"
+    
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        """Convert comma-separated string to list."""
+        if self.CORS_ORIGINS_RAW == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS_RAW.split(",") if origin.strip()]
     
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
