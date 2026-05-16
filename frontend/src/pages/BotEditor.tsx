@@ -407,7 +407,6 @@ export default function BotEditor() {
   }, [bot, isNew]);
 
   // Get current provider info
-  const currentProvider = getProvider(form.provider || 'openai');
   const availableModels = getModelsForProvider(form.provider || 'openai');
 
   // Mutations
@@ -547,8 +546,8 @@ export default function BotEditor() {
               <div className="mt-3">
                 <Input
                   label="Custom Base URL"
-                  value={(form.config as any)?.custom_base_url || ''}
-                  onChange={(e) => updateField('config', { ...form.config, custom_base_url: e.target.value })}
+                  value={(form as any).config?.custom_base_url || ''}
+                  onChange={(e) => updateField('config', { ...(form as any).config || {}, custom_base_url: e.target.value })}
                   placeholder="https://api.example.com/v1"
                 />
               </div>
