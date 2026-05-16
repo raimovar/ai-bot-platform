@@ -214,10 +214,6 @@ class BotResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_started: Optional[datetime] = None
-    
-    # Computed
-    tools: list[BotToolResponse] = []
-    is_running: bool = False
 
 
 class BotListResponse(BaseModel):
