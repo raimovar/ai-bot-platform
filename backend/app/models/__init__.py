@@ -6,6 +6,7 @@ from app.models.bot import Bot, BotTool
 from app.models.session import Session
 from app.models.message import Message
 from app.models.knowledge import KnowledgeSource, KnowledgeChunk
+from app.models.provider_key import ProviderKey
 
 __all__ = [
     "User",
@@ -15,4 +16,5 @@ __all__ = [
     "Message",
     "KnowledgeSource",
     "KnowledgeChunk",
+    "ProviderKey",
 ]

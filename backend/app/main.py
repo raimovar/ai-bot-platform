@@ -10,7 +10,7 @@ import time
 
 from app.core.config import settings
 from app.core.database import init_db, close_db
-from app.api.v1 import bots, sessions, messages, knowledge, users, webhooks
+from app.api.v1 import bots, sessions, messages, knowledge, users, webhooks, provider_keys
 
 
 @asynccontextmanager
@@ -142,6 +142,13 @@ app.include_router(
     users.router,
     prefix="/api/v1/users",
     tags=["users"]
+)
+
+# Provider Keys
+app.include_router(
+    provider_keys.router,
+    prefix="/api/v1/users/provider-keys",
+    tags=["provider-keys"]
 )
 
 # Bots
