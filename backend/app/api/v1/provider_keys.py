@@ -26,7 +26,7 @@ def encrypt_key(api_key: str, key_id: str) -> str:
     return base64.b64encode(combined.encode()).decode()
 
 
-@router.get("/", response_model=ProviderKeyListResponse)
+@router.get("/")
 async def list_provider_keys(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
