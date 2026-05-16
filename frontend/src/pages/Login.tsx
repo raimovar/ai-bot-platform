@@ -42,7 +42,8 @@ export default function Login() {
         });
         setAuth(response.data.user, response.data.access_token);
         toast.success('Welcome back!');
-        navigate('/');
+        // Wait for Zustand persist to write to localStorage before navigating
+        setTimeout(() => navigate('/'), 100);
       }
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Authentication failed');
