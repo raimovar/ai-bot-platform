@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
+import { useState, useEffect } from "react";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import BotsList from "./pages/BotsList";
@@ -19,6 +20,27 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Loading spinner for auth hydration
+function AuthLoader({ children }: { children: React.ReactNode }) {
+  const [hydrated, setHydrated] = useState(false);
+  
+  useEffect(() => {
+    // Small delay to ensure Zustand persist has hydrated
+    const timer = setTimeout(() => setHydrated(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+  
+  if (!hydrated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+  
+  return <>{children}</>;
+}
 
 // Protected route wrapper
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -63,7 +85,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AppRoutes />
+        <AuthLoader>
+          <AppRoutes />
+        </AuthLoader>
         <Toaster 
           position="top-right"
           toastOptions={{
