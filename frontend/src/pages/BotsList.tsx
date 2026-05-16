@@ -68,6 +68,18 @@ export default function BotsList() {
     stopped: data?.items?.filter((b: any) => b.status === 'stopped').length || 0,
   };
 
+  // Debug: log query state
+  console.log('BotsList query:', { 
+    isLoading, 
+    error: error?.message, 
+    dataCount: data?.items?.length,
+    isAuthenticated 
+  });
+
+  if (isLoading) {
+    return <LoadingSpinner />;
+  }
+
   if (error) {
     return (
       <div className="text-center py-12">
