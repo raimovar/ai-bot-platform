@@ -206,8 +206,9 @@ class BotResponse(BaseModel):
     avatar_url: Optional[str] = None
     welcome_message: Optional[str] = None
     
-    # Metadata
-    metadata: dict
+    # Metadata/Config
+    config: dict = Field(default_factory=dict)
+    tools_enabled: bool = False
     
     # Timestamps
     created_at: datetime
