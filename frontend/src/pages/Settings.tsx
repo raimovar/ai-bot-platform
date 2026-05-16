@@ -6,7 +6,6 @@ import { Save, Key, Bell, Shield, Palette, Plus, Trash2, Eye, EyeOff, Copy, Chec
 import api from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import Input from '../components/Input';
-import Select from '../components/Select';
 import Button from '../components/Button';
 import toast from 'react-hot-toast';
 import { PROVIDERS } from './BotEditor';
