@@ -20,7 +20,7 @@ export default function BotsList() {
   // Fetch bots
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['bots'],
-    queryFn: () => api.get('/bots').then((r) => r.data),
+    queryFn: () => api.get('/bots/').then((r) => r.data),
   });
 
   // Mutations

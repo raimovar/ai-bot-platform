@@ -9,7 +9,7 @@ export default function Dashboard() {
   // Fetch bots
   const { data: botsData } = useQuery({
     queryKey: ['bots'],
-    queryFn: () => api.get('/bots').then((r) => r.data),
+    queryFn: () => api.get('/bots/').then((r) => r.data),
   });
 
   // Fetch stats
