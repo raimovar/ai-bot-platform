@@ -19,11 +19,10 @@ export default function BotsList() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch bots
+  // Fetch bots - always enabled, let API handle auth
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['bots'],
     queryFn: () => api.get('/bots/').then((r) => r.data),
-    enabled: isAuthenticated,
   });
 
   // Mutations

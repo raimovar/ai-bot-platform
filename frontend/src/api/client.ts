@@ -12,12 +12,15 @@ const api = axios.create({
   timeout: 30000,
 });
 
-// Request interceptor - add auth token
+// Axios request interceptor - add auth token
 api.interceptors.request.use(
   (config) => {
     const { token } = useAuthStore.getState();
+    console.log('Axios interceptor - token:', token ? 'exists' : 'none');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    } else {
+      console.log('Axios interceptor - NO TOKEN, request will fail');
     }
     return config;
   },
