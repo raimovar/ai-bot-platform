@@ -10,10 +10,12 @@ import EmptyState from '../components/EmptyState';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ConfirmDialog from '../components/ConfirmDialog';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../stores/authStore';
 
 export default function BotsList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { isAuthenticated } = useAuthStore();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -21,6 +23,7 @@ export default function BotsList() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['bots'],
     queryFn: () => api.get('/bots/').then((r) => r.data),
+    enabled: isAuthenticated,
   });
 
   // Mutations

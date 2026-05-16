@@ -4,19 +4,23 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Bot, MessageSquare, Zap, Clock, TrendingUp, Plus } from 'lucide-react';
 import api from '../api/client';
+import { useAuthStore } from '../stores/authStore';
 
 export default function Dashboard() {
+  const { isAuthenticated } = useAuthStore();
+
   // Fetch bots
   const { data: botsData } = useQuery({
     queryKey: ['bots'],
     queryFn: () => api.get('/bots/').then((r) => r.data),
+    enabled: isAuthenticated,
   });
 
   // Fetch stats
   const { data: stats } = useQuery({
     queryKey: ['bot-stats'],
     queryFn: () => api.get('/bots/stats/overview').then((r) => r.data),
-    enabled: true,
+    enabled: isAuthenticated,
   });
 
   const bots = botsData?.items || [];
